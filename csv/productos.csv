@@ -1,0 +1,4 @@
+CodigoProducto,Nombre,Categoria,Precio,IdFuente
+P001,Mouse,Electrónica,150.00,1
+P002,Teclado,Electrónica,200.00,1
+P003,Monitor,Electrónica,1200.00,1
