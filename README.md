@@ -33,6 +33,48 @@ SELECT
     Total,
     IdFuente
 FROM Ventas;
+
+SELECT 
+    IdFuente,
+    TipoFuente,
+    Descripcion,
+    FechaCarga
+FROM FuenteDatos;
+
+SELECT 
+    IdCliente,
+    CodigoCliente,
+    Nombre,
+    Email,
+    Region,
+    IdFuente
+FROM Clientes;
+
+SELECT 
+    IdVenta,
+    IdCliente,
+    IdProducto,
+    Cantidad,
+    Precio,
+    FechaVenta,
+    Total,
+    IdFuente
+FROM Ventas;
+
+SELECT 
+    v.IdVenta,
+    c.Nombre AS Cliente,
+    p.Nombre AS Producto,
+    p.Categoria,
+    v.Cantidad,
+    v.Precio,
+    v.Total,
+    v.FechaVenta,
+    f.TipoFuente
+FROM Ventas v
+INNER JOIN Clientes c ON v.IdCliente = c.IdCliente
+INNER JOIN Productos p ON v.IdProducto = p.IdProducto
+INNER JOIN FuenteDatos f ON v.IdFuente = f.IdFuente;
 ```
 
 ## 4. Evaluación
