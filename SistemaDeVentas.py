@@ -1,25 +1,19 @@
 import os
 import pandas as pd
-import decimal
 from datetime import datetime
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine
 import urllib
 
-
-DATA_DIR = os.path.join(os.path.dirname(__file__), 'csv') 
-DB_SERVER = r"LAPTOP-L44SRLPQ\SQLEXPRESS"  
+DATA_DIR = os.path.join(os.path.dirname(__file__), 'csv')
+DB_SERVER = r"LAPTOP-L44SRLPQ\SQLEXPRESS"
 DB_NAME = "SistemaAnalisisVentas"
-DRIVER = "ODBC Driver 17 for SQL Server"  
+DRIVER = "ODBC Driver 17 for SQL Server"
 
-# CSV filenames expected
 FILES = {
-    "fuentes": "fuentes.csv",
-    "productos": "productos.csv",
-    "clientes": "clientes.csv",
-    "ventas": "ventas.csv",                
-    "encuestas": "encuestas.csv",
-    "comentarios": "comentarios_sociales.csv",
-    "opiniones": "opiniones_web.csv"
+    "customers": "customers.csv",
+    "products": "products.csv",
+    "orders": "orders.csv",
+    "order_details": "order_details.csv"
 }
 
 def get_engine():
@@ -33,7 +27,8 @@ def clean_df(df, required_cols):
     for c in df.select_dtypes(include=["object", "string"]).columns:
         df[c] = df[c].astype(str).str.strip().replace({"nan": None})
     df.replace({"": None}, inplace=True)
-    df.dropna(subset=required_cols, inplace=True)
+    if required_cols:
+        df.dropna(subset=required_cols, inplace=True)
     df.drop_duplicates(inplace=True)
     return df
 
@@ -62,83 +57,87 @@ def parse_date(x):
 def main():
     engine = get_engine()
 
-    # Fuentes
-    fuentes_path = os.path.join(DATA_DIR, FILES["fuentes"])
-    if os.path.exists(fuentes_path):
-        fuentes = pd.read_csv(fuentes_path)
-        fuentes = clean_df(fuentes, ["TipoFuente"])
-        fuentes['Descripcion'] = fuentes.get('Descripcion', None)
-        fuentes = fuentes[['TipoFuente','Descripcion']].drop_duplicates()
-        fuentes.to_sql('FuenteDatos', engine, if_exists='append', index=False)
-        print("Fuentes loaded:", len(fuentes))
-    else:
-        print("No fuentes.csv found — ensure source file exists.")
+    # DataSources
+    data_sources = pd.DataFrame([
+        {"SourceType": "CSV", "Description": "Datos importados desde archivos CSV"},
+        {"SourceType": "API", "Description": "Datos importados desde API externa"},
+        {"SourceType": "SQL", "Description": "Datos importados desde otra base de datos"}
+    ])
+    data_sources.to_sql('DataSources', engine, if_exists='append', index=False)
+    print("DataSources loaded:", len(data_sources))
 
-    #Productos
-    prod_path = os.path.join(DATA_DIR, FILES["productos"])
+    # Customers
+    cust_path = os.path.join(DATA_DIR, FILES["customers"])
+    if os.path.exists(cust_path):
+        customers = pd.read_csv(cust_path)
+        customers = clean_df(customers, ["CustomerID", "FirstName", "LastName"])
+        customers = customers[["CustomerID", "FirstName", "LastName", "Email", "Phone", "City", "Country"]]
+        customers.to_sql('Customers', engine, if_exists='append', index=False)
+        print("Customers loaded:", len(customers))
+    else:
+        print("No customers.csv found.")
+
+    # Products
+    prod_path = os.path.join(DATA_DIR, FILES["products"])
     if os.path.exists(prod_path):
-        productos = pd.read_csv(prod_path)
-        productos = clean_df(productos, ['CodigoProducto','Nombre','Precio'])
-        productos['Precio'] = productos['Precio'].apply(parse_decimal)
-        productos = productos.dropna(subset=['Precio'])
-        productos = productos[['CodigoProducto','Nombre','Categoria','Precio','IdFuente']].copy()
-        productos.to_sql('Productos', engine, if_exists='append', index=False)
-        print("Productos loaded:", len(productos))
+        products = pd.read_csv(prod_path)
+        products = clean_df(products, ["ProductID", "ProductName", "Price"])
+        products["Price"] = products["Price"].apply(parse_decimal)
+        products = products.dropna(subset=["Price"])
+        products = products[["ProductID", "ProductName", "Category", "Price", "Stock"]]
+        products.to_sql('Products', engine, if_exists='append', index=False)
+        print("Products loaded:", len(products))
     else:
-        print("No productos.csv found.")
+        print("No products.csv found.")
 
-    # Clientes
-    cli_path = os.path.join(DATA_DIR, FILES["clientes"])
-    if os.path.exists(cli_path):
-        clientes = pd.read_csv(cli_path)
-        clientes = clean_df(clientes, ['CodigoCliente','Nombre'])
-        clientes = clientes[['CodigoCliente','Nombre','Email','Region','IdFuente']].copy()
-        clientes.to_sql('Clientes', engine, if_exists='append', index=False)
-        print("Clientes loaded:", len(clientes))
+    # Orders
+    orders_path = os.path.join(DATA_DIR, FILES["orders"])
+    if os.path.exists(orders_path):
+        orders = pd.read_csv(orders_path)
+        orders = clean_df(orders, ["OrderID", "CustomerID", "OrderDate"])
+        orders["OrderDate"] = orders["OrderDate"].apply(parse_date)
+        orders = orders.dropna(subset=["OrderDate"])
+        orders = orders[["OrderID", "CustomerID", "OrderDate", "Status"]]
+        orders.to_sql('Orders', engine, if_exists='append', index=False)
+        print("Orders loaded:", len(orders))
     else:
-        print("No clientes.csv found.")
+        print("No orders.csv found.")
 
-    # Ventas 
-    ventas_path = os.path.join(DATA_DIR, FILES["ventas"])
-    if os.path.exists(ventas_path):
-        ventas = pd.read_csv(ventas_path)
-        ventas = clean_df(ventas, ['CodigoProducto','CodigoCliente','Cantidad','Precio','FechaVenta'])
-        ventas['Precio'] = ventas['Precio'].apply(parse_decimal)
-        ventas['FechaVenta'] = ventas['FechaVenta'].apply(parse_date)
-        ventas = ventas.dropna(subset=['Precio','FechaVenta'])
-        # Fetch mappings
-        with engine.connect() as conn:
-            prod_map = pd.read_sql("SELECT IdProducto,CodigoProducto FROM Productos", conn).set_index('CodigoProducto')['IdProducto'].to_dict()
-            cli_map = pd.read_sql("SELECT IdCliente,CodigoCliente FROM Clientes", conn).set_index('CodigoCliente')['IdCliente'].to_dict()
-        ventas['IdProducto'] = ventas['CodigoProducto'].map(prod_map)
-        ventas['IdCliente'] = ventas['CodigoCliente'].map(cli_map)
-        ventas = ventas.dropna(subset=['IdProducto','IdCliente'])
-        ventas = ventas[['IdCliente','IdProducto','Cantidad','Precio','FechaVenta','IdFuente']]
-        ventas.to_sql('Ventas', engine, if_exists='append', index=False)
-        print("Ventas loaded:", len(ventas))
+    # Order Details
+    od_path = os.path.join(DATA_DIR, FILES["order_details"])
+    if os.path.exists(od_path):
+        order_details = pd.read_csv(od_path)
+        order_details = clean_df(order_details, ["OrderID", "ProductID", "Quantity", "TotalPrice"])
+        order_details["TotalPrice"] = order_details["TotalPrice"].apply(parse_decimal)
+        order_details = order_details.dropna(subset=["TotalPrice"])
+        order_details = order_details[["OrderID", "ProductID", "Quantity", "TotalPrice"]]
+        order_details.to_sql('OrderDetails', engine, if_exists='append', index=False)
+        print("OrderDetails loaded:", len(order_details))
     else:
-        print("No ventas.csv found; skipping.")
-
-    # Encuestas, Comentarios, Opiniones
-    def load_generic(file_key, table_name, required_cols, col_map=None):
-        p = os.path.join(DATA_DIR, FILES[file_key])
-        if not os.path.exists(p):
-            print(f"No {FILES[file_key]} found; skipping {table_name}.")
-            return
-        df = pd.read_csv(p)
-        df = clean_df(df, required_cols)
-        if 'Fecha' in df.columns or 'FechaEncuesta' in df.columns:
-            for c in df.columns:
-                if 'Fecha' in c:
-                    df[c] = df[c].apply(parse_date)
-        if col_map:
-            df = df.rename(columns=col_map)
-        df.to_sql(table_name, engine, if_exists='append', index=False)
-        print(f"{table_name} loaded:", len(df))
-
-    load_generic('encuestas','Encuestas',['Pregunta'], None)
-    load_generic('comentarios','ComentariosSociales',['Texto'], None)
-    load_generic('opiniones','OpinionesWeb',['Texto'], None)
+        print("No order_details.csv found.")
+    # Invoices
+    with engine.connect() as conn:
+        orders_df = pd.read_sql("SELECT OrderID, OrderDate FROM Orders", conn)
+        od_df = pd.read_sql("SELECT OrderID, TotalPrice FROM OrderDetails", conn)
+        if not orders_df.empty and not od_df.empty:
+            invoice_rows = []
+            for oid, group in od_df.groupby('OrderID'):
+                total = group['TotalPrice'].sum()
+                order_date = orders_df.loc[orders_df['OrderID'] == oid, 'OrderDate']
+                invoice_date = order_date.iloc[0] if not order_date.empty else datetime.now()
+                invoice_rows.append({
+                    'OrderID': oid,
+                    'InvoiceDate': invoice_date,
+                    'TotalAmount': total
+                })
+            invoices = pd.DataFrame(invoice_rows)
+            if not invoices.empty:
+                invoices.to_sql('Invoices', engine, if_exists='append', index=False)
+                print("Invoices loaded:", len(invoices))
+            else:
+                print("No invoices generated.")
+        else:
+            print("No data for invoices.")
 
 if __name__ == "__main__":
     main()
