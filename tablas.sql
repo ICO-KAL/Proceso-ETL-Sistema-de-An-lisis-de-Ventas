@@ -1,5 +1,3 @@
--- Script SQL para el modelo basado en los archivos CSV actuales y requerimientos completos
-
 CREATE TABLE Customers (
     CustomerID INT PRIMARY KEY,
     FirstName VARCHAR(100) NOT NULL,
