@@ -190,19 +190,29 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_DW_FactSales_SourceID'
     CREATE INDEX IX_DW_FactSales_SourceID ON DW_FactSales(SourceID);
 
 
--- CONSULTAS KPI / PREGUNTAS DE NEGOCIO
+-- CONSULTAS KPI / PREGUNTAS DE NEGOCIO (VERSIÓN LIMPIA, SIN REPETICIONES)
 
+-- 1. Análisis general de ventas
 
---  Análisis general de ventas
--- Total de ventas global
+-- ¿Cuál es el total de ventas global registrado en el sistema?
 SELECT SUM(fs.SalesAmount) AS TotalVentasGlobal
 FROM DW_FactSales fs;
 
--- Promedio de venta por transacción
+-- ¿Cuál es el promedio de ventas por transacción?
 SELECT AVG(fs.SalesAmount * 1.0) AS PromedioVentaPorTransaccion
 FROM DW_FactSales fs;
 
--- Ventas totales por período (año/mes)
+-- ¿Cuántas ventas totales se realizaron en un periodo específico (día, mes o año)?
+-- Por día
+SELECT d.FullDate,
+       COUNT(*) AS TotalTransacciones,
+       SUM(fs.SalesAmount) AS TotalVentas
+FROM DW_FactSales fs
+JOIN DW_DimDate d ON fs.DateKey = d.DateKey
+GROUP BY d.FullDate
+ORDER BY d.FullDate;
+
+-- Por mes
 SELECT d.[Year], d.[Month],
        COUNT(*) AS TotalTransacciones,
        SUM(fs.SalesAmount) AS TotalVentas
@@ -211,34 +221,70 @@ JOIN DW_DimDate d ON fs.DateKey = d.DateKey
 GROUP BY d.[Year], d.[Month]
 ORDER BY d.[Year], d.[Month];
 
--- Volumen de ventas por país/ciudad
-SELECT l.Country, l.City,
-       SUM(fs.SalesAmount) AS IngresoTotal,
-       SUM(fs.Quantity) AS UnidadesVendidas
+-- Por año
+SELECT d.[Year],
+       COUNT(*) AS TotalTransacciones,
+       SUM(fs.SalesAmount) AS TotalVentas
+FROM DW_FactSales fs
+JOIN DW_DimDate d ON fs.DateKey = d.DateKey
+GROUP BY d.[Year]
+ORDER BY d.[Year];
+
+-- ¿Cuál es el volumen de ventas por país, región o ciudad?
+SELECT ISNULL(l.Country, 'SinPais') AS Country,
+       ISNULL(l.Region, 'SinRegion') AS Region,
+       ISNULL(l.City, 'SinCiudad') AS City,
+       SUM(fs.Quantity) AS VolumenUnidades,
+       SUM(fs.SalesAmount) AS IngresoTotal
 FROM DW_FactSales fs
 JOIN DW_DimLocation l ON fs.LocationKey = l.LocationKey
-GROUP BY l.Country, l.City
+GROUP BY l.Country, l.Region, l.City
 ORDER BY IngresoTotal DESC;
 
--- Ventas por producto
--- Top productos más vendidos (por unidades)
+-- 2. Ventas por producto
+
+-- ¿Cuáles son los productos más vendidos en el periodo actual?
 SELECT TOP 5 p.ProductName,
        SUM(fs.Quantity) AS UnidadesVendidas,
        SUM(fs.SalesAmount) AS IngresoTotal
 FROM DW_FactSales fs
 JOIN DW_DimProduct p ON fs.ProductKey = p.ProductKey
+JOIN DW_DimDate d ON fs.DateKey = d.DateKey
+WHERE d.[Year] = (SELECT MAX([Year]) FROM DW_DimDate)
 GROUP BY p.ProductName
 ORDER BY UnidadesVendidas DESC;
 
--- Productos con menor rotación
+-- ¿Qué productos generan mayor ingreso total?
 SELECT p.ProductName,
-       SUM(fs.Quantity) AS UnidadesVendidas
+       SUM(fs.SalesAmount) AS IngresoTotal
 FROM DW_FactSales fs
 JOIN DW_DimProduct p ON fs.ProductKey = p.ProductKey
 GROUP BY p.ProductName
-ORDER BY UnidadesVendidas ASC;
+ORDER BY IngresoTotal DESC;
 
--- Precio promedio de venta por producto
+-- ¿Qué productos tienen menor rotación o ventas más bajas?
+SELECT p.ProductName,
+       SUM(fs.Quantity) AS UnidadesVendidas,
+       SUM(fs.SalesAmount) AS IngresoTotal
+FROM DW_FactSales fs
+JOIN DW_DimProduct p ON fs.ProductKey = p.ProductKey
+GROUP BY p.ProductName
+ORDER BY UnidadesVendidas ASC, IngresoTotal ASC;
+
+-- ¿Cómo ha evolucionado la demanda de un producto específico a lo largo del tiempo?
+DECLARE @Producto VARCHAR(200) = 'Statement';
+
+SELECT d.[Year], d.[Month],
+       SUM(fs.Quantity) AS UnidadesVendidas,
+       SUM(fs.SalesAmount) AS IngresoMensual
+FROM DW_FactSales fs
+JOIN DW_DimProduct p ON fs.ProductKey = p.ProductKey
+JOIN DW_DimDate d ON fs.DateKey = d.DateKey
+WHERE p.ProductName = @Producto
+GROUP BY d.[Year], d.[Month]
+ORDER BY d.[Year], d.[Month];
+
+-- ¿Cuál es el precio promedio de venta por producto?
 SELECT p.ProductName,
        AVG(fs.UnitPrice * 1.0) AS PrecioPromedioVenta
 FROM DW_FactSales fs
@@ -246,17 +292,26 @@ JOIN DW_DimProduct p ON fs.ProductKey = p.ProductKey
 GROUP BY p.ProductName
 ORDER BY PrecioPromedioVenta DESC;
 
--- Ventas por cliente
--- Top 5 clientes con más compras
+-- 3. Ventas por cliente
+
+-- ¿Qué clientes realizan más compras?
 SELECT TOP 5 c.FullName,
-       COUNT(*) AS NumeroCompras,
-       SUM(fs.SalesAmount) AS IngresoTotal
+       COUNT(*) AS NumeroCompras
 FROM DW_FactSales fs
 JOIN DW_DimCustomer c ON fs.CustomerKey = c.CustomerKey
 GROUP BY c.FullName
 ORDER BY NumeroCompras DESC;
 
--- Promedio de productos por transacción por cliente
+-- ¿Qué clientes generan mayor volumen de ventas o ingresos totales?
+SELECT c.FullName,
+       SUM(fs.Quantity) AS VolumenComprado,
+       SUM(fs.SalesAmount) AS IngresoGenerado
+FROM DW_FactSales fs
+JOIN DW_DimCustomer c ON fs.CustomerKey = c.CustomerKey
+GROUP BY c.FullName
+ORDER BY IngresoGenerado DESC;
+
+-- ¿Cuántos productos en promedio compra un cliente por transacción?
 SELECT c.FullName,
        AVG(fs.Quantity * 1.0) AS PromedioProductosPorTransaccion
 FROM DW_FactSales fs
@@ -264,7 +319,7 @@ JOIN DW_DimCustomer c ON fs.CustomerKey = c.CustomerKey
 GROUP BY c.FullName
 ORDER BY PromedioProductosPorTransaccion DESC;
 
--- Porcentaje del total de ventas que representa el Top 5 clientes
+-- ¿Qué porcentaje del total de ventas pertenece al Top 5 de clientes?
 WITH VentasCliente AS (
     SELECT c.CustomerKey,
            c.FullName,
@@ -278,10 +333,23 @@ Top5 AS (
     FROM VentasCliente
     ORDER BY TotalCliente DESC
 )
-SELECT (SELECT SUM(TotalCliente) FROM Top5) * 100.0 / NULLIF((SELECT SUM(TotalCliente) FROM VentasCliente), 0) AS PorcentajeTop5Clientes;
+SELECT (SELECT SUM(TotalCliente) FROM Top5) * 100.0
+       / NULLIF((SELECT SUM(TotalCliente) FROM VentasCliente), 0) AS PorcentajeTop5Clientes;
 
--- D) Tendencias temporales
--- Tendencia mensual y trimestral
+-- ¿Cómo se comportan las compras por segmento de clientes (por país, tipo, etc.)?
+SELECT ISNULL(c.Country, 'SinPais') AS Pais,
+       ISNULL(c.CustomerType, 'SinTipo') AS TipoCliente,
+       COUNT(*) AS Transacciones,
+       SUM(fs.Quantity) AS Unidades,
+       SUM(fs.SalesAmount) AS IngresoTotal
+FROM DW_FactSales fs
+JOIN DW_DimCustomer c ON fs.CustomerKey = c.CustomerKey
+GROUP BY c.Country, c.CustomerType
+ORDER BY IngresoTotal DESC;
+
+-- 4. Tendencias temporales
+
+-- ¿Cuál es la tendencia mensual o trimestral de ventas?
 SELECT d.[Year], d.[Quarter], d.[Month],
        SUM(fs.SalesAmount) AS VentasMes
 FROM DW_FactSales fs
@@ -289,9 +357,54 @@ JOIN DW_DimDate d ON fs.DateKey = d.DateKey
 GROUP BY d.[Year], d.[Quarter], d.[Month]
 ORDER BY d.[Year], d.[Quarter], d.[Month];
 
--- Comparativas y desempeño
--- Porcentaje de ventas por categoría
+-- ¿En qué meses o periodos se concentran los picos de ventas?
+SELECT TOP 5 d.[Year], d.[Month],
+       SUM(fs.SalesAmount) AS VentasMes
+FROM DW_FactSales fs
+JOIN DW_DimDate d ON fs.DateKey = d.DateKey
+GROUP BY d.[Year], d.[Month]
+ORDER BY VentasMes DESC;
+
+-- ¿Existe estacionalidad en los productos más vendidos?
+SELECT p.ProductName,
+       d.[Month],
+       SUM(fs.Quantity) AS UnidadesVendidas
+FROM DW_FactSales fs
+JOIN DW_DimProduct p ON fs.ProductKey = p.ProductKey
+JOIN DW_DimDate d ON fs.DateKey = d.DateKey
+GROUP BY p.ProductName, d.[Month]
+ORDER BY p.ProductName, d.[Month];
+
+-- ¿Cuál ha sido la evolución del ingreso total durante el año?
+WITH IngresoMensual AS (
+    SELECT d.[Year], d.[Month],
+           SUM(fs.SalesAmount) AS IngresoMes
+    FROM DW_FactSales fs
+    JOIN DW_DimDate d ON fs.DateKey = d.DateKey
+    GROUP BY d.[Year], d.[Month]
+)
+SELECT [Year], [Month], IngresoMes,
+       SUM(IngresoMes) OVER (PARTITION BY [Year] ORDER BY [Month]) AS IngresoAcumuladoAnual
+FROM IngresoMensual
+ORDER BY [Year], [Month];
+
+-- 5. Comparativas y desempeño
+-- ¿Cuál es la diferencia de ventas entre productos o categorías?
 WITH VentasCategoria AS (
+    SELECT p.Category,
+           SUM(fs.SalesAmount) AS VentasCategoria
+    FROM DW_FactSales fs
+    JOIN DW_DimProduct p ON fs.ProductKey = p.ProductKey
+    GROUP BY p.Category
+)
+SELECT Category,
+       VentasCategoria,
+       VentasCategoria - LAG(VentasCategoria) OVER (ORDER BY VentasCategoria DESC) AS DiferenciaVsCategoriaAnterior
+FROM VentasCategoria
+ORDER BY VentasCategoria DESC;
+
+-- ¿Qué porcentaje de ventas representa cada categoría del total?
+WITH PorcentajeCategoria AS (
     SELECT p.Category,
            SUM(fs.SalesAmount) AS TotalCategoria
     FROM DW_FactSales fs
@@ -301,10 +414,20 @@ WITH VentasCategoria AS (
 SELECT Category,
        TotalCategoria,
        TotalCategoria * 100.0 / NULLIF(SUM(TotalCategoria) OVER (), 0) AS PorcentajeDelTotal
-FROM VentasCategoria
+FROM PorcentajeCategoria
 ORDER BY TotalCategoria DESC;
 
--- Comparación año actual vs año anterior
+-- ¿Qué vendedores o regiones presentan mejor desempeño?
+SELECT ISNULL(l.Region, l.Country) AS RegionAnalitica,
+       l.City,
+       SUM(fs.SalesAmount) AS IngresoTotal,
+       SUM(fs.Quantity) AS UnidadesVendidas
+FROM DW_FactSales fs
+JOIN DW_DimLocation l ON fs.LocationKey = l.LocationKey
+GROUP BY ISNULL(l.Region, l.Country), l.City
+ORDER BY IngresoTotal DESC;
+
+-- ¿Cómo se comparan las ventas de este año con las del año anterior?
 SELECT d.[Year],
        SUM(fs.SalesAmount) AS TotalVentas,
        LAG(SUM(fs.SalesAmount)) OVER (ORDER BY d.[Year]) AS VentasAnioAnterior,
@@ -315,9 +438,17 @@ JOIN DW_DimDate d ON fs.DateKey = d.DateKey
 GROUP BY d.[Year]
 ORDER BY d.[Year];
 
--- KPIs directos
--- Total de ventas por producto/cliente/mes
-SELECT p.ProductName, c.FullName, d.[Year], d.[Month],
+-- 6. Indicadores clave (KPIs)
+
+-- Total de ventas: suma del valor total de todas las facturas.
+SELECT SUM(i.TotalAmount) AS TotalVentasFacturadas
+FROM Invoices i;
+
+-- Total de ventas por producto / cliente / mes.
+SELECT p.ProductName,
+       c.FullName,
+       d.[Year],
+       d.[Month],
        SUM(fs.SalesAmount) AS TotalVentas
 FROM DW_FactSales fs
 JOIN DW_DimProduct p ON fs.ProductKey = p.ProductKey
@@ -325,3 +456,57 @@ JOIN DW_DimCustomer c ON fs.CustomerKey = c.CustomerKey
 JOIN DW_DimDate d ON fs.DateKey = d.DateKey
 GROUP BY p.ProductName, c.FullName, d.[Year], d.[Month]
 ORDER BY d.[Year], d.[Month], TotalVentas DESC;
+
+-- Top 5 productos más vendidos.
+SELECT TOP 5 p.ProductName,
+       SUM(fs.Quantity) AS UnidadesVendidas
+FROM DW_FactSales fs
+JOIN DW_DimProduct p ON fs.ProductKey = p.ProductKey
+GROUP BY p.ProductName
+ORDER BY UnidadesVendidas DESC;
+
+-- Top 5 clientes con más compras.
+SELECT TOP 5 c.FullName,
+       COUNT(*) AS NumeroCompras
+FROM DW_FactSales fs
+JOIN DW_DimCustomer c ON fs.CustomerKey = c.CustomerKey
+GROUP BY c.FullName
+ORDER BY NumeroCompras DESC;
+
+-- Promedio de venta por cliente.
+SELECT c.FullName,
+       AVG(fs.SalesAmount * 1.0) AS PromedioVentaPorCliente
+FROM DW_FactSales fs
+JOIN DW_DimCustomer c ON fs.CustomerKey = c.CustomerKey
+GROUP BY c.FullName
+ORDER BY PromedioVentaPorCliente DESC;
+
+-- Crecimiento porcentual de ventas por mes.
+WITH VentasMes AS (
+    SELECT d.[Year], d.[Month],
+           SUM(fs.SalesAmount) AS TotalVentasMes
+    FROM DW_FactSales fs
+    JOIN DW_DimDate d ON fs.DateKey = d.DateKey
+    GROUP BY d.[Year], d.[Month]
+)
+SELECT [Year], [Month], TotalVentasMes,
+       LAG(TotalVentasMes) OVER (ORDER BY [Year], [Month]) AS VentasMesAnterior,
+       (TotalVentasMes - LAG(TotalVentasMes) OVER (ORDER BY [Year], [Month])) * 100.0
+            / NULLIF(LAG(TotalVentasMes) OVER (ORDER BY [Year], [Month]), 0) AS CrecimientoPctMensual
+FROM VentasMes
+ORDER BY [Year], [Month];
+
+-- Crecimiento porcentual de ventas por trimestre.
+WITH VentasTrimestre AS (
+    SELECT d.[Year], d.[Quarter],
+           SUM(fs.SalesAmount) AS TotalVentasTrimestre
+    FROM DW_FactSales fs
+    JOIN DW_DimDate d ON fs.DateKey = d.DateKey
+    GROUP BY d.[Year], d.[Quarter]
+)
+SELECT [Year], [Quarter], TotalVentasTrimestre,
+       LAG(TotalVentasTrimestre) OVER (ORDER BY [Year], [Quarter]) AS VentasTrimestreAnterior,
+       (TotalVentasTrimestre - LAG(TotalVentasTrimestre) OVER (ORDER BY [Year], [Quarter])) * 100.0
+            / NULLIF(LAG(TotalVentasTrimestre) OVER (ORDER BY [Year], [Quarter]), 0) AS CrecimientoPctTrimestral
+FROM VentasTrimestre
+ORDER BY [Year], [Quarter];
