@@ -48,7 +48,15 @@ Este proyecto implementa un proceso ETL (Extracción, Transformación y Carga) p
 - **Carga:** Inserción de los datos procesados en las tablas del modelo, respetando las relaciones establecidas.
 - **Generación de facturas:** El sistema calcula automáticamente las facturas a partir de los pedidos y sus detalles.
 
-## 3. Ejemplo de Código del Sistema ETL
+## 3. Breve descripción de las decisiones de diseño
+
+Se adoptó un modelo estrella porque simplifica el análisis de ventas y mejora el rendimiento de consultas agregadas para KPI, reportes por periodo, cliente y producto. La tabla de hechos DW_FactSales concentra las métricas transaccionales (cantidad, precio unitario, monto de venta y conteo de transacciones), mientras que las dimensiones DW_DimDate, DW_DimCustomer, DW_DimProduct, DW_DimLocation y DW_DimSource aportan el contexto analítico para segmentar y comparar resultados.
+
+Las dimensiones se definieron a partir de las entidades de negocio existentes: clientes, productos, fechas de pedido, ubicación del cliente y origen del dato (CSV, API o SQL). Esto permite mantener trazabilidad de la procedencia de la información y responder preguntas de desempeño comercial por tiempo, categoría, país/ciudad y comportamiento de clientes.
+
+También se definieron llaves primarias y foráneas entre hechos y dimensiones para garantizar integridad referencial. En la carga ETL se decidió una estrategia de recarga completa controlada (limpieza y carga) para evitar duplicados y asegurar consistencia en ejecuciones repetidas del proceso.
+
+## 4. Ejemplo de Código del Sistema ETL
 
 ```python
 import os
